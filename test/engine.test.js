@@ -1,0 +1,15 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {cents,validDate,emptyState,validateState,addTicket,monthlySummary,purchasedCoverage} from '../engine.js';
+const ticket=(overrides={})=>({id:'a',game:'Powerball',reference:'receipt-1',purchasedAt:'2026-09-30',costCents:2400,prizeCents:0,drawDates:['2026-10-03','2026-10-05'],...overrides});
+test('currency uses exact integer cents',()=>{assert.equal(cents('0.29'),29);assert.equal(cents('100'),10000);for(const x of ['-1','1.001','NaN','1e3','',Infinity])assert.throws(()=>cents(x));});
+test('calendar validation rejects rollover and malformed dates',()=>{assert.ok(validDate('2024-02-29'));for(const d of ['2026-02-29','2026-04-31','2026-13-01','26-01-01',''])assert.equal(validDate(d),false);});
+test('advance ticket cost belongs to purchase month, coverage to exact dates',()=>{const state=addTicket(emptyState(),ticket());assert.equal(monthlySummary(state,'2026-09').spentCents,2400);assert.equal(monthlySummary(state,'2026-10').spentCents,0);assert.deepEqual(purchasedCoverage(state).map(c=>c.date),['2026-10-03','2026-10-05']);});
+test('repeated receipt is rejected even with a different id or case',()=>{const state=addTicket(emptyState(),ticket());assert.throws(()=>addTicket(state,ticket({id:'b',reference:'RECEIPT-1'})),/Duplicate/);assert.throws(()=>addTicket(state,ticket({reference:'other'})),/Duplicate/);});
+test('distinct tickets in same draw are retained',()=>{const s=addTicket(addTicket(emptyState(),ticket()),ticket({id:'b',reference:'receipt-2'}));assert.equal(purchasedCoverage(s)[0].tickets,2);assert.equal(monthlySummary(s,'2026-09').spentCents,4800);});
+test('prizes do not inflate budget and overspend stays visible',()=>{const s=addTicket(emptyState(),ticket({costCents:12000,prizeCents:5000}));assert.deepEqual(monthlySummary(s,'2026-09'),{spentCents:12000,prizeCents:5000,remainingCents:-2000,netCents:-7000});});
+test('backup round trip retains records',()=>{const s=addTicket(emptyState(),ticket());assert.deepEqual(validateState(JSON.parse(JSON.stringify(s))),s);});
+test('invalid backup and invalid ticket amounts fail',()=>{for(const value of [{},null,{...emptyState(),version:2},{...emptyState(),budgetCents:-1},{...emptyState(),tickets:[ticket({costCents:0.2})]},{...emptyState(),tickets:[ticket({drawDates:['2026-10-03','2026-10-03']})]}])assert.throws(()=>validateState(value));});
+test('optional draw dates do not invent coverage',()=>{const s=addTicket(emptyState(),ticket({drawDates:[]}));assert.deepEqual(purchasedCoverage(s),[]);});
+test('new records do not mutate prior state',()=>{const s=emptyState();addTicket(s,ticket());assert.deepEqual(s,emptyState());});
+test('invalid month rejected',()=>{assert.throws(()=>monthlySummary(emptyState(),'2026-13'));});
