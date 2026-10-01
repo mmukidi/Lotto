@@ -1,12 +1,21 @@
-const key='little-luck-diary-v1';
-const message=document.getElementById('message');
-document.getElementById('export').addEventListener('click',()=>{
- try {
-  const records=localStorage.getItem(key);
-  if(!records){message.textContent='No previous records are saved in this browser.';return;}
-  const url=URL.createObjectURL(new Blob([records],{type:'application/json'}));
-  const link=document.createElement('a');link.href=url;link.download='little-luck-previous-records.json';link.click();
-  setTimeout(()=>URL.revokeObjectURL(url),1000);
-  message.textContent='Backup download requested. Check your browser downloads.';
- } catch {message.textContent='Unable to access previous records in this browser.';}
-});
+import {GAMES,validateHistory,describe,experiment} from './research.js';
+const $=id=>document.getElementById(id),key='little-luck-history-v1';let rows=[],bundled,origin='';
+function el(tag,text,cls){const n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n;}
+function message(text){$('message').textContent=text;}
+function table(headers,records){const t=document.createElement('table'),head=document.createElement('thead'),body=document.createElement('tbody'),h=document.createElement('tr');headers.forEach(v=>h.append(el('th',v)));head.append(h);for(const record of records){const r=document.createElement('tr');record.forEach(v=>r.append(el('td',String(v))));body.append(r);}t.append(head,body);return t;}
+function chart(target,counts,expected){const max=Math.max(1,expected,...counts);target.replaceChildren(...counts.map((c,i)=>{const column=el('div','','bar-column');column.title=`Number ${i+1}: ${c} appearances; uniform reference ${expected.toFixed(2)}`;column.setAttribute('aria-label',column.title);const bar=el('div','','bar');bar.style.height=`${c/max*110}px`;const reference=el('i','','reference');reference.style.bottom=`${expected/max*110+20}px`;column.append(el('small',String(c)),bar,el('span',String(i+1)),reference);return column;}));}
+function render(){const game=$('game').value;let selected=rows.filter(r=>r.game===game&&(!$('from').value||r.date>=$('from').value)&&(!$('to').value||r.date<=$('to').value));if($('from').value&&$('to').value&&$('from').value>$('to').value){message('From date must be before the end date.');selected=[];}
+ const s=describe(selected,game),g=GAMES[game];$('source').href=g.source;$('provenance').textContent=origin+' · '+rows.length+' records across all games. This is not a live feed or a complete archive.';
+ $('summary').replaceChildren(...[['Draws',s.count],['First date',s.first||'—'],['Last date',s.last||'—'],['Average sum',s.meanSum.toFixed(1)]].map(([k,v])=>{const d=el('div','');d.append(el('span',k),el('strong',String(v)));return d;}));chart($('main-chart'),s.main,s.count*5/g.max);chart($('bonus-chart'),s.bonus,g.bonusMax?s.count/g.bonusMax:0);$('bonus-title').hidden=!g.bonusMax;$('bonus-chart').hidden=!g.bonusMax;$('odd-chart').replaceChildren(table(['Odd main numbers','Draw count'],s.oddDistribution.map((n,i)=>[i,n])));$('draws').replaceChildren(table(['Date','Main numbers','Bonus'],selected.slice().reverse().map(r=>[r.date,r.numbers.join(' · '),r.bonus??'—'])));
+}
+function run(){try{const r=experiment(Number($('seed').value));$('experiment-meta').textContent=`Seed ${r.seed} · ${r.trainCount} training draws · ${r.testCount} held-out test draws · fictional 5-of-20 model`;$('experiment-results').replaceChildren(table(['Method','Mean matches','Approx. 95% mean interval','0 / 1 / 2 / 3 / 4 / 5 matches'],r.results.map(x=>[x.method,x.mean.toFixed(3),`${(x.mean-x.halfInterval).toFixed(3)} – ${(x.mean+x.halfInterval).toFixed(3)}`,x.histogram.join(' / ')])));}catch(e){message(e.message);}}
+function download(text,name){const u=URL.createObjectURL(new Blob([text],{type:'application/json'})),a=el('a','');a.href=u;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(u),1000);message('Download requested; check your browser downloads.');}
+for(const id of ['game','from','to'])$(id).addEventListener('change',render);
+$('experiment-form').addEventListener('submit',e=>{e.preventDefault();run();});
+$('history').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;try{if(file.size>10000000)throw new Error('File exceeds 10 MB.');const next=validateHistory(JSON.parse(await file.text()));const label='User import; source authenticity not independently verified';localStorage.setItem(key,JSON.stringify({rows:next,origin:label}));rows=next;origin=label;render();message('Validated history imported.');}catch(err){message(`Import failed: ${err.message}. Existing data retained.`);}finally{e.target.value='';}});
+$('snapshot').addEventListener('click',()=>{if(!bundled)return;try{localStorage.removeItem(key);rows=validateHistory(bundled.draws);origin=`NC public archive snapshot captured ${bundled.capturedAt}`;render();message('Bundled snapshot restored.');}catch(e){message(e.message);}});
+$('history-export').addEventListener('click',()=>download(JSON.stringify({draws:rows,description:origin},null,2),'little-luck-history.json'));
+$('export').addEventListener('click',()=>{try{const r=localStorage.getItem('little-luck-diary-v1');if(!r){message('No previous diary records in this browser.');return;}download(r,'little-luck-previous-records.json');}catch(e){message(e.message);}});
+try{const response=await fetch('./data/history.json');if(!response.ok)throw new Error('Snapshot unavailable');bundled=await response.json();rows=validateHistory(bundled.draws);origin=`NC public archive snapshot captured ${bundled.capturedAt}`;
+ try{const saved=localStorage.getItem(key);if(saved){const imported=JSON.parse(saved);rows=validateHistory(imported.rows);origin='User import; source authenticity not independently verified';}}catch{message('Saved import could not be read; showing bundled snapshot.');}
+ render();}catch(e){message(`History could not load: ${e.message}. You can still import a file.`);}run();
